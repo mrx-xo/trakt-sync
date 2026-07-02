@@ -672,5 +672,22 @@
       }
     },
     "slug": "twelve-monkeys-1995"
+  },
+  "smile 1": {
+    "title": "Smile",
+    "year": 2022,
+    "overview": "After witnessing a bizarre, traumatic incident involving a patient, Dr. Rose Cotter starts experiencing frightening occurrences that she can't explain.",
+    "poster": "https://media.trakt.tv/images/movies/000/706/971/posters/medium/dc55e6bae0.jpg.webp",
+    "ids": {
+      "trakt": 706971,
+      "slug": "smile-2022",
+      "imdb": "tt15474916",
+      "tmdb": 882598,
+      "plex": {
+        "guid": "614edf4304d54032654b3027",
+        "slug": "smile-2022-1"
+      }
+    },
+    "slug": "smile-2022"
   }
 }

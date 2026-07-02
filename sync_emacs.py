@@ -2,9 +2,13 @@
 """Emacs-facing interface for trakt-sync.
 
 Commands (passed as first arg):
-    candidates  — parse org, search Trakt, output JSON with matches to confirm
-    commit      — read mappings.json, sync confirmed entries to Trakt
-    search      — search Trakt for a query (arg2), output JSON results
+    candidates           — parse org, search Trakt, output JSON with matches to confirm
+    commit               — read mappings.json, sync confirmed entries to Trakt history
+    search               — search Trakt for a query (arg2), output JSON results
+    save-mapping         — persist a title->movie choice (mappings.json)
+    watchlist-candidates — parse movies-to-watch.org, search Trakt, output JSON
+    watchlist-commit     — push mapped entries to Trakt watchlist
+    watchlist-save       — persist a title->movie choice (watchlist_mappings.json)
 """
 
 import json
@@ -14,22 +18,25 @@ from pathlib import Path
 
 from parse_org import parse_org_file
 from trakt_client import (
-    authenticate, search_movies, get_watched_history, add_to_history
+    authenticate, search_movies, get_watched_history, add_to_history,
+    get_watchlist, add_to_watchlist,
 )
 
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_ORG = (SCRIPT_DIR / "../../notes/movies-watched.org").resolve()
+DEFAULT_WATCHLIST_ORG = (SCRIPT_DIR / "../../notes/movies-to-watch.org").resolve()
 MAPPINGS_FILE = SCRIPT_DIR / "mappings.json"
+WATCHLIST_MAPPINGS_FILE = SCRIPT_DIR / "watchlist_mappings.json"
 
 
-def load_mappings() -> dict:
-    if MAPPINGS_FILE.exists():
-        return json.loads(MAPPINGS_FILE.read_text())
+def load_mappings(path: Path = MAPPINGS_FILE) -> dict:
+    if path.exists():
+        return json.loads(path.read_text())
     return {}
 
 
-def save_mappings(mappings: dict):
-    MAPPINGS_FILE.write_text(json.dumps(mappings, indent=2))
+def save_mappings(mappings: dict, path: Path = MAPPINGS_FILE):
+    path.write_text(json.dumps(mappings, indent=2))
 
 
 def poster_url(movie: dict) -> str | None:
@@ -183,6 +190,128 @@ def cmd_commit(org_path: str):
     print(json.dumps({"added": added, "message": f"Synced {added} movies to Trakt"}))
 
 
+def parse_watchlist_org(org_path: str) -> list[dict]:
+    """Parse movies-to-watch.org into a list of {title, year} dicts."""
+    import re
+    entries = []
+    for line in Path(org_path).read_text().splitlines():
+        line = line.strip()
+        if not line.startswith("* "):
+            continue
+        raw = line[2:].strip()
+        m = re.match(r'^(.+?)\s*\((\d{4})\)\s*$', raw)
+        if m:
+            entries.append({"title": m.group(1).strip(), "year": int(m.group(2))})
+        else:
+            entries.append({"title": raw, "year": None})
+    return entries
+
+
+def cmd_watchlist_candidates(org_path: str):
+    """Output JSON: list of watchlist entries with search candidates."""
+    entries = parse_watchlist_org(org_path)
+    mappings = load_mappings(WATCHLIST_MAPPINGS_FILE)
+    token = authenticate()
+
+    existing = get_watchlist(token)
+    existing_ids = set()
+    for item in existing:
+        tid = item.get("movie", {}).get("ids", {}).get("trakt")
+        if tid:
+            existing_ids.add(tid)
+
+    output = []
+    for entry in entries:
+        key = entry["title"].lower().strip()
+        item = {
+            "org_title": entry["title"],
+            "watched_date": None,
+        }
+
+        if key in mappings:
+            mapped = mappings[key]
+            item["status"] = "mapped"
+            item["mapped_to"] = mapped
+            if mapped.get("ids", {}).get("trakt") in existing_ids:
+                item["status"] = "synced"
+            output.append(item)
+            continue
+
+        results = search_movies(entry["title"], year=entry.get("year"), limit=5)
+        candidates = []
+        for movie in results:
+            candidates.append({
+                "title": movie.get("title", ""),
+                "year": movie.get("year"),
+                "overview": (movie.get("overview") or "")[:200],
+                "poster": poster_url(movie),
+                "ids": movie.get("ids", {}),
+                "slug": movie.get("ids", {}).get("slug", ""),
+            })
+
+        auto = None
+        for c in candidates:
+            if c["title"].lower().strip() == key:
+                auto = c
+                break
+
+        if auto:
+            item["status"] = "auto"
+            item["mapped_to"] = auto
+            mappings[key] = auto
+        else:
+            item["status"] = "unmatched"
+
+        item["candidates"] = candidates
+        output.append(item)
+
+    save_mappings(mappings, WATCHLIST_MAPPINGS_FILE)
+    print(json.dumps(output, indent=2))
+
+
+def cmd_watchlist_save(org_title: str, movie_json: str):
+    """Save a single watchlist mapping choice."""
+    mappings = load_mappings(WATCHLIST_MAPPINGS_FILE)
+    key = org_title.lower().strip()
+    movie = json.loads(movie_json)
+    mappings[key] = movie
+    save_mappings(mappings, WATCHLIST_MAPPINGS_FILE)
+    print(json.dumps({"ok": True, "title": org_title, "mapped_to": movie.get("title", "")}))
+
+
+def cmd_watchlist_commit(org_path: str):
+    """Push all mapped watchlist entries to Trakt watchlist."""
+    entries = parse_watchlist_org(org_path)
+    mappings = load_mappings(WATCHLIST_MAPPINGS_FILE)
+    token = authenticate()
+
+    existing = get_watchlist(token)
+    existing_ids = set()
+    for item in existing:
+        tid = item.get("movie", {}).get("ids", {}).get("trakt")
+        if tid:
+            existing_ids.add(tid)
+
+    to_add = []
+    for entry in entries:
+        key = entry["title"].lower().strip()
+        if key not in mappings:
+            continue
+        mapped = mappings[key]
+        trakt_id = mapped.get("ids", {}).get("trakt")
+        if trakt_id in existing_ids:
+            continue
+        to_add.append({"ids": mapped["ids"]})
+
+    if not to_add:
+        print(json.dumps({"added": 0, "message": "Nothing to sync"}))
+        return
+
+    result = add_to_watchlist(to_add, token)
+    added = result.get("added", {}).get("movies", 0)
+    print(json.dumps({"added": added, "message": f"Added {added} movies to watchlist"}))
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "candidates"
 
@@ -196,6 +325,14 @@ if __name__ == "__main__":
     elif cmd == "commit":
         path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_ORG)
         cmd_commit(path)
+    elif cmd == "watchlist-candidates":
+        path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_WATCHLIST_ORG)
+        cmd_watchlist_candidates(path)
+    elif cmd == "watchlist-save":
+        cmd_watchlist_save(sys.argv[2], sys.argv[3])
+    elif cmd == "watchlist-commit":
+        path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_WATCHLIST_ORG)
+        cmd_watchlist_commit(path)
     else:
         print(json.dumps({"error": f"Unknown command: {cmd}"}), file=sys.stderr)
         sys.exit(1)

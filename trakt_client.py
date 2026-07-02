@@ -156,3 +156,27 @@ def add_to_history(movies: list[dict], access_token: str) -> dict:
     if status not in (200, 201):
         raise RuntimeError(f"Failed to sync history: {status} {data}")
     return data
+
+
+# --- Watchlist ---
+
+def get_watchlist(access_token: str) -> list[dict]:
+    """Get all movies on the Trakt watchlist."""
+    status, data = _request("GET", "/sync/watchlist/movies?sort=added",
+                            access_token=access_token)
+    if status != 200:
+        return []
+    return data or []
+
+
+def add_to_watchlist(movies: list[dict], access_token: str) -> dict:
+    """Add movies to watchlist.
+
+    Each movie dict should have:
+        - ids: {trakt: int} or {imdb: str} or {tmdb: int}
+    """
+    status, data = _request("POST", "/sync/watchlist", {"movies": movies},
+                            access_token=access_token)
+    if status not in (200, 201):
+        raise RuntimeError(f"Failed to add to watchlist: {status} {data}")
+    return data
