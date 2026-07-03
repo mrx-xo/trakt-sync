@@ -1,4 +1,6 @@
 .env
 token.json
+mappings.json
+watchlist_mappings.json
 __pycache__/
 .agent-shell/
