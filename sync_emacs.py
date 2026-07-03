@@ -19,7 +19,7 @@ from pathlib import Path
 from parse_org import parse_org_file
 from trakt_client import (
     authenticate, search_movies, get_watched_history, add_to_history,
-    get_watchlist, add_to_watchlist,
+    get_watchlist, add_to_watchlist, remove_from_watchlist, lookup_movie_by_slug,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -145,6 +145,27 @@ def cmd_search(query: str):
             "slug": movie.get("ids", {}).get("slug", ""),
         })
     print(json.dumps(output, indent=2))
+
+
+def cmd_lookup(url_or_slug: str):
+    """Look up a movie by Trakt URL or slug, output as JSON candidate."""
+    import re
+    authenticate()
+    # Extract slug from URL like trakt.tv/movies/threads-1984
+    m = re.search(r'trakt\.tv/movies/([a-z0-9-]+)', url_or_slug)
+    slug = m.group(1) if m else url_or_slug.strip().strip('/')
+    movie = lookup_movie_by_slug(slug)
+    if not movie:
+        print(json.dumps([]))
+        return
+    print(json.dumps([{
+        "title": movie.get("title", ""),
+        "year": movie.get("year"),
+        "overview": (movie.get("overview") or "")[:200],
+        "poster": poster_url(movie),
+        "ids": movie.get("ids", {}),
+        "slug": movie.get("ids", {}).get("slug", ""),
+    }], indent=2))
 
 
 def cmd_commit(org_path: str):
@@ -312,6 +333,77 @@ def cmd_watchlist_commit(org_path: str):
     print(json.dumps({"added": added, "message": f"Added {added} movies to watchlist"}))
 
 
+def cmd_watchlist_unmapped(org_path: str):
+    """List watchlist titles that have no mapping."""
+    entries = parse_watchlist_org(org_path)
+    mappings = load_mappings(WATCHLIST_MAPPINGS_FILE)
+    unmapped = [e["title"] for e in entries if e["title"].lower().strip() not in mappings]
+    print(json.dumps(unmapped))
+
+
+def cmd_history_unmapped(org_path: str):
+    """List history titles that have no mapping."""
+    entries = parse_org_file(org_path)
+    mappings = load_mappings()
+    unmapped = [e.title for e in entries if e.title.lower().strip() not in mappings]
+    print(json.dumps(unmapped))
+
+
+def cmd_log_watched(movie_json: str, date_str: str):
+    """Log a movie as watched: add to Trakt history, remove from watchlist if present."""
+    movie = json.loads(movie_json)
+    token = authenticate()
+
+    # Add to Trakt history
+    hist = {"ids": movie["ids"]}
+    if date_str:
+        parts = date_str.split("/")
+        month, day = int(parts[0]), int(parts[1])
+        year = int(parts[2])
+        if year < 100:
+            year += 2000
+        dt = datetime(year, month, day, 12, 0, 0, tzinfo=timezone.utc)
+        hist["watched_at"] = dt.isoformat()
+
+    result = add_to_history([hist], token)
+    added = result.get("added", {}).get("movies", 0)
+
+    # Remove from Trakt watchlist if present
+    watchlist = get_watchlist(token)
+    trakt_id = movie.get("ids", {}).get("trakt")
+    on_watchlist = any(
+        w.get("movie", {}).get("ids", {}).get("trakt") == trakt_id
+        for w in watchlist
+    )
+    removed = 0
+    if on_watchlist:
+        rm_result = remove_from_watchlist([{"ids": movie["ids"]}], token)
+        removed = rm_result.get("deleted", {}).get("movies", 0)
+
+    # Save to history mappings
+    title = movie.get("title", "")
+    mappings = load_mappings()
+    mappings[title.lower().strip()] = {
+        "title": title,
+        "year": movie.get("year"),
+        "ids": movie.get("ids", {}),
+        "slug": movie.get("ids", {}).get("slug", ""),
+        "poster": movie.get("poster"),
+        "overview": movie.get("overview"),
+    }
+    save_mappings(mappings)
+
+    msg = "Logged as watched"
+    if removed:
+        msg += ", removed from watchlist"
+    print(json.dumps({
+        "added": added,
+        "removed_from_watchlist": removed,
+        "title": title,
+        "message": msg,
+    }))
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "candidates"
 
@@ -322,6 +414,8 @@ if __name__ == "__main__":
         cmd_save_mapping(sys.argv[2], sys.argv[3])
     elif cmd == "search":
         cmd_search(sys.argv[2])
+    elif cmd == "lookup":
+        cmd_lookup(sys.argv[2])
     elif cmd == "commit":
         path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_ORG)
         cmd_commit(path)
@@ -333,6 +427,14 @@ if __name__ == "__main__":
     elif cmd == "watchlist-commit":
         path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_WATCHLIST_ORG)
         cmd_watchlist_commit(path)
+    elif cmd == "watchlist-unmapped":
+        path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_WATCHLIST_ORG)
+        cmd_watchlist_unmapped(path)
+    elif cmd == "history-unmapped":
+        path = sys.argv[2] if len(sys.argv) > 2 else str(DEFAULT_ORG)
+        cmd_history_unmapped(path)
+    elif cmd == "log-watched":
+        cmd_log_watched(sys.argv[2], sys.argv[3])
     else:
         print(json.dumps({"error": f"Unknown command: {cmd}"}), file=sys.stderr)
         sys.exit(1)

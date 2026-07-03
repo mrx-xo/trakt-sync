@@ -134,6 +134,14 @@ def search_movies(title: str, year: int | None = None, limit: int = 5) -> list[d
     return [r["movie"] for r in results if "movie" in r]
 
 
+def lookup_movie_by_slug(slug: str) -> dict | None:
+    """Look up a movie by its Trakt slug (e.g. 'threads-1984'). Returns movie object or None."""
+    status, data = _request("GET", f"/movies/{slug}?extended=full")
+    if status != 200 or not data:
+        return None
+    return data
+
+
 # --- Sync ---
 
 def get_watched_history(access_token: str) -> list[dict]:
@@ -179,4 +187,17 @@ def add_to_watchlist(movies: list[dict], access_token: str) -> dict:
                             access_token=access_token)
     if status not in (200, 201):
         raise RuntimeError(f"Failed to add to watchlist: {status} {data}")
+    return data
+
+
+def remove_from_watchlist(movies: list[dict], access_token: str) -> dict:
+    """Remove movies from watchlist.
+
+    Each movie dict should have:
+        - ids: {trakt: int} or {imdb: str} or {tmdb: int}
+    """
+    status, data = _request("POST", "/sync/watchlist/remove", {"movies": movies},
+                            access_token=access_token)
+    if status not in (200, 201):
+        raise RuntimeError(f"Failed to remove from watchlist: {status} {data}")
     return data
