@@ -4,3 +4,6 @@ mappings.json
 watchlist_mappings.json
 __pycache__/
 .agent-shell/
+letterboxd_pushed.json
+letterboxd_pushed.tmp
+.letterboxd-host

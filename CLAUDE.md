@@ -11,6 +11,7 @@ Two layers: Python backend (API + parsing) and Elisp frontend (Emacs UI).
 - `parse_org.py` — Parses `movies-watched.org` into `MovieEntry` dataclasses. Handles multiple date formats (`MM/DD/YY`, `MM/DD/YYYY`, `MM/DD`), year separators (`--- 2026 ---`), and rewatch markers (`(2)`, `(x2)`).
 - `trakt_client.py` — Trakt API v2 client using only stdlib (`urllib`). Device code OAuth flow, movie search, watch history read/write. Needs `User-Agent` header to avoid Cloudflare 1010 blocks.
 - `sync_emacs.py` — JSON interface for Emacs. Commands: `candidates` (parse + search + return matches), `save-mapping` (persist a title->movie choice), `search` (re-search Trakt), `commit` (push mapped entries to Trakt history).
+- `letterboxd_push.py` — Mirrors new Trakt plays to the Letterboxd diary via a real Chromium window driven over CDP; started by `letterboxd-kick.sh`, which Emacs `log-watched` runs after a Trakt sync. Operation, rationale and troubleshooting: README `## Letterboxd mirror`.
 - `sync.py` — Standalone CLI sync (dry-run by default, `--commit` to push). Doesn't use mappings — searches directly. Less reliable than the Emacs flow for ambiguous titles.
 
 ### Elisp (`~/.emacs.d/lisp/trakt-sync.el`)
