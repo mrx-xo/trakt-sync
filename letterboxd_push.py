@@ -267,7 +267,16 @@ def log_one(pg, entry: dict) -> str:
         f.rating.value = '0';
         if (f.liked) f.liked.checked = false;
     }""", entry)
-    pg.get_by_role("button", name="Save", exact=True).filter(visible=True).first.click()
+    # Click Save from script, like the modal trigger above. Since 2026-11-15 the
+    # button and the modal carry CSS transitions that never leave "running", so
+    # Playwright's own click waits forever for the element to be "stable".
+    saved = form.first.evaluate("""f => {
+        const b = document.querySelector(`button[form="${f.id}"][type="submit"]`);
+        if (!b || b.disabled || !b.offsetParent) return false;
+        b.click();
+        return true }""")
+    if not saved:
+        raise ValueError("Save button missing or disabled after filling the form")
     form.wait_for(state="hidden", timeout=20000)
     pg.wait_for_timeout(1500)
 

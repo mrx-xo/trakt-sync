@@ -136,11 +136,13 @@ no rating or like (the logger records neither). Nothing runs on a timer.
 
 `letterboxd-kick.sh` runs the push on the **push host**, the machine whose
 `~/.config/machine-id` is written in `.letterboxd-host` (gitignored, so no
-hostname enters this public repo). There the LaunchAgent
-`com.marcosandrade.letterboxd-push` is loaded with no schedule and started by
-`launchctl kickstart`. If the push host is unreachable, the script pushes from
-the local machine instead, which opens a Chromium window there for a few
-seconds per film. Duplicates are prevented twice over: the
+hostname enters this public repo). The script runs the push there over ssh and
+waits for it, so Emacs gets the exit code: a failed film raises a macOS
+notification and an echo-area message, both pointing at the
+` *trakt-sync-after-log*` buffer. If the push host is unreachable, the script
+pushes from the local machine instead, which opens a Chromium window there for
+a few seconds per film. The LaunchAgent `com.marcosandrade.letterboxd-push`
+on the push host is kept for manual `launchctl kickstart` runs only. Duplicates are prevented twice over: the
 `letterboxd_pushed.json` ledger (Trakt history id -> pushed, Syncthing-shared,
 gitignored) and a check of the film's Letterboxd diary before every log.
 
@@ -197,12 +199,18 @@ upload at `letterboxd.com/import`.
 
 ### Troubleshooting
 
-- `Letterboxd push failed` in Emacs: read the ` *trakt-sync-after-log*` buffer.
-  A run on the push host reports into that machine's `launchd.log` instead.
+- `Letterboxd push failed` in Emacs (notification + echo area): read the
+  ` *trakt-sync-after-log*` buffer; the push host's own copy of the output is
+  in its `push.log`.
 - `ABORT Letterboxd session is logged out`: that machine's login expired; redo
   setup step 1 there.
 - `ABORT Cloudflare human check did not clear`: Cloudflare got stricter. Run
   `check` by hand; if it fails, the approach needs revisiting.
+- `Locator.click: Timeout` on Save with the modal open and filled: Letterboxd
+  animates the Save button (CSS transitions that stay `running`), so a
+  Playwright click never sees it "stable". The script clicks it from page
+  script for that reason (since 2026-11-17); do not switch back to a locator
+  click.
 - A failed film is retried on the next push, up to 5 times; `status` lists it.
   Fix it with `push-one`, then add its history id to `pushed` in the ledger.
 - Trakt tokens last 7 days and are refreshed by whichever machine needs one

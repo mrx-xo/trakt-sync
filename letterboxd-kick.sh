@@ -10,15 +10,19 @@
 set -u
 cd "${0:A:h}"
 uv=/opt/homebrew/bin/uv
-label=com.marcosandrade.letterboxd-push
 host=$(cat .letterboxd-host 2>/dev/null)
 here=$(cat ~/.config/machine-id 2>/dev/null)
 
 if [[ -n "$host" && "$host" == "$here" ]]; then
-  launchctl kickstart "gui/$(id -u)/$label" && exit 0
+  : # push host is this machine: fall through to the local run below
 elif [[ -n "$host" ]]; then
-  ssh -n -o ConnectTimeout=5 -o BatchMode=yes "$host" \
-    "launchctl kickstart gui/\$(id -u)/$label" 2>/dev/null && exit 0
+  # Run the push over ssh and wait for it, so the exit code and output reach
+  # Emacs (a launchctl kickstart returns before the push has done anything).
+  # A login shell gives the remote the PATH that launchd would.
+  if ssh -n -o ConnectTimeout=5 -o BatchMode=yes "$host" true 2>/dev/null; then
+    exec ssh -n -o BatchMode=yes "$host" \
+      "zsh -lc 'cd ~/roaming/code/trakt-sync && $uv run -q letterboxd_push.py run'"
+  fi
   echo "letterboxd-kick: $host unreachable, pushing from $here" >&2
 fi
 exec "$uv" run -q letterboxd_push.py run
